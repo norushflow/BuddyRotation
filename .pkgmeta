@@ -1,0 +1,7 @@
+package-as: BuddyRotation
+ignore:
+  - .github
+  - branding
+  - tests
+  - tools
+  - README.md
