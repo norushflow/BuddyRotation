@@ -1,0 +1,80 @@
+name: CurseForge release
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Test and package only (no upload)
+        type: boolean
+        default: true
+      confirm_version:
+        description: For upload, confirm the version is absent on CurseForge and enter it (e.g. 0.1.0)
+        type: string
+        required: false
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: curseforge-release
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install test and packaging dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lua5.1 zip unzip
+      - name: Test and package
+        run: bash tools/release.sh --output-dir "$RUNNER_TEMP/buddyrotation-dist"
+      - name: Validate and upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          CONFIRM_VERSION: ${{ inputs.confirm_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          [[ $GH_REPO == norushflow/BuddyRotation ]] || fail "Unexpected repository."
+          version=$(awk '/^## Version:/ {print $3; exit}' BuddyRotation.toc | tr -d '\r')
+          project=$(awk '/^## X-Curse-Project-ID:/ {print $3; exit}' BuddyRotation.toc | tr -d '\r')
+          interface=$(awk '/^## Interface:/ {print $3; exit}' BuddyRotation.toc | tr -d '\r')
+          [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && $project == 1830707 && $interface =~ ^16[0-9]{3}$ ]] || fail "Invalid TOC metadata."
+          archive="$RUNNER_TEMP/buddyrotation-dist/BuddyRotation-$version-forever.zip"
+          unzip -tq "$archive"
+          cmp BuddyRotation.toc <(unzip -p "$archive" BuddyRotation/BuddyRotation.toc)
+          game_version="$((10#${interface:0:1})).$((10#${interface:1:2})).$((10#${interface:3:2}))"
+          if [[ $DRY_RUN == true ]]; then
+            echo "Tests and ZIP validation passed: BuddyRotation $version ($game_version). No upload." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          [[ $CONFIRM_VERSION == "$version" ]] || fail "Confirm this version is absent on CurseForge first."
+          [[ -n $CF_API_TOKEN ]] || fail "Configure the CF_API_TOKEN repository secret."
+          [[ $(gh api "repos/$GH_REPO/commits/main" --jq .sha) == "$GITHUB_SHA" ]] || fail "main has changed; start a fresh run."
+          versions=$(curl --fail --silent --show-error --max-time 30 -H "X-Api-Token: $CF_API_TOKEN" https://wow.curseforge.com/api/game/versions)
+          game_id=$(jq -er --arg v "$game_version" '[.[] | select(.name == $v) | .id] | unique | select(length == 1) | .[0]' <<< "$versions") || fail "No unique CurseForge game version found."
+          work=$(mktemp -d)
+          trap 'rm -rf "$work"' EXIT
+          changelog="BuddyRotation $version"
+          if [[ -f RELEASE_NOTES.md ]]; then changelog=$(cat RELEASE_NOTES.md); fi
+          jq -n --arg version "$version" --arg notes "$changelog" --argjson game "$game_id" '{displayName: ("BuddyRotation " + $version), changelog: $notes, changelogType: "markdown", gameVersions: [$game], releaseType: "release"}' > "$work/metadata.json"
+          context="curseforge-release/v$version"
+          # Use the current commit status and require manual absence confirmation on every upload.
+          record=$(gh api --paginate "repos/$GH_REPO/commits/$GITHUB_SHA/statuses?per_page=100" --jq ".[] | select(.context == \"$context\") | .state")
+          [[ -z $record ]] || fail "A previous upload attempt exists on this commit. Check CurseForge before any recovery."
+          gh api --method POST "repos/$GH_REPO/statuses/$GITHUB_SHA" -f state=pending -f context="$context" -f description='CurseForge upload started; check before retry' --jq .state >/dev/null
+          curl --fail --silent --show-error --max-time 90 -H "X-Api-Token: $CF_API_TOKEN" -F "metadata=<$work/metadata.json" -F "file=@$archive;type=application/zip" "https://wow.curseforge.com/api/projects/$project/upload-file" > "$work/response.json"
+          file_id=$(jq -er '.id | select(type == "number")' "$work/response.json")
+          gh api --method POST "repos/$GH_REPO/statuses/$GITHUB_SHA" -f state=success -f context="$context" -f description="CurseForge accepted file $file_id" --jq .state >/dev/null
+          echo "CurseForge accepted BuddyRotation $version as file $file_id. Approval may still be pending." >> "$GITHUB_STEP_SUMMARY"
