@@ -5,6 +5,12 @@ cd -- "$(dirname -- "$0")/.."
 out=$(realpath -m -- "$2")
 ./tools/check.sh
 version=$(awk '/^## Version:/ {print $3}' BuddyRotation.toc)
+if [[ ! -s RELEASE_NOTES.md ]] ||
+    [[ $(head -n 1 RELEASE_NOTES.md) != "# v$version" ]] ||
+    ! grep -q '^- [^[:space:]]' RELEASE_NOTES.md; then
+    printf 'RELEASE_NOTES.md must contain the v%s heading and at least one release note.\n' "$version" >&2
+    exit 1
+fi
 mkdir -p -- "$out"
 stage=$(mktemp -d -- "$out/.buddyrotation.XXXXXXXX")
 trap 'rm -rf -- "$stage"' EXIT

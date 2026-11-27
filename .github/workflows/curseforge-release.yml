@@ -66,8 +66,7 @@ jobs:
           game_id=$(jq -er --arg v "$game_version" '[.[] | select(.name == $v) | .id] | unique | select(length == 1) | .[0]' <<< "$versions") || fail "No unique CurseForge game version found."
           work=$(mktemp -d)
           trap 'rm -rf "$work"' EXIT
-          changelog="BuddyRotation $version"
-          if [[ -f RELEASE_NOTES.md ]]; then changelog=$(cat RELEASE_NOTES.md); fi
+          changelog=$(cat RELEASE_NOTES.md)
           jq -n --arg version "$version" --arg notes "$changelog" --argjson game "$game_id" '{displayName: ("BuddyRotation " + $version), changelog: $notes, changelogType: "markdown", gameVersions: [$game], releaseType: "release"}' > "$work/metadata.json"
           context="curseforge-release/v$version"
           # Use the current commit status and require manual absence confirmation on every upload.

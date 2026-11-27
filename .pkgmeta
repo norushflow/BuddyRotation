@@ -1,7 +1,11 @@
 package-as: BuddyRotation
+manual-changelog:
+  filename: RELEASE_NOTES.md
+  markup-type: markdown
 ignore:
   - .github
   - branding
   - tests
   - tools
   - README.md
+  - RELEASE_NOTES.md
