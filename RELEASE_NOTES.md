@@ -1,4 +1,5 @@
-# v0.1.1
+# v0.1.2
 
-- Hide the two spell and ability cooldown messages briefly after a BuddyRotation macro on WoW Forever. Other error messages still appear.
-- Fix a Lua error when opening the rotation editor on spellbooks that use numeric texture IDs.
+- Add optional mouseover targeting per spell for healing and damage.
+- Show the next spell on the default action bar.
+- Reset combat sequences when combat ends and advance on the next press if the opener is out of range.
